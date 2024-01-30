@@ -1,0 +1,29 @@
+org:
+# For the temporal organization, that we set as trusted so
+# that `omni up` and omni commands provided by repositories
+# of the organization can be run. This will also allow you
+# to easy clone any temporalio repository with
+# `omni clone <repo_name>`
+- handle: git@github.com:temporalio
+  trusted: true
+# If you want to be able to easily clone your repositories
+- handle: git@github.com:<YOUR USERNAME>
+  trusted: true
+# Not mandatory, but allows for a nice `omni clone <org>/<repo>`
+# of any github repository
+- handle: github.com
+  trusted: false
+
+# Any path where you want your worktree to be, as in
+# where the git repositories will be cloned.
+worktree: ~/git
+
+# The format in which you want the repositories to be
+# cloned under the worktree. Available variables are:
+#    %{host}, %{org}, %{repo}
+# For instance, cloning git@github.com:temporalio/cloud-tools
+# with '%{org}/%{repo}' as repo_path_format will
+# clone the repository in <worktree>/temporalio/cloud-tools
+# while using '%{host}/%{org}/%{repo}' would clone it in
+# <worktree>/github.com/temporalio/cloud-tools
+repo_path_format: '%{host}/%{org}/%{repo}'
