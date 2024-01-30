@@ -7,7 +7,7 @@ org:
 - handle: git@github.com:temporalio
   trusted: true
 # If you want to be able to easily clone your repositories
-- handle: git@github.com:<YOUR USERNAME>
+- handle: git@github.com:dandavison
   trusted: true
 # Not mandatory, but allows for a nice `omni clone <org>/<repo>`
 # of any github repository
@@ -16,7 +16,7 @@ org:
 
 # Any path where you want your worktree to be, as in
 # where the git repositories will be cloned.
-worktree: ~/git
+worktree: ~/src/temporalio
 
 # The format in which you want the repositories to be
 # cloned under the worktree. Available variables are:
@@ -26,4 +26,4 @@ worktree: ~/git
 # clone the repository in <worktree>/temporalio/cloud-tools
 # while using '%{host}/%{org}/%{repo}' would clone it in
 # <worktree>/github.com/temporalio/cloud-tools
-repo_path_format: '%{host}/%{org}/%{repo}'
+repo_path_format: '%{repo}'
