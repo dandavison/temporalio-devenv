@@ -1,0 +1,26 @@
+#!/bin/bash
+
+set -u
+
+links=
+[ "$1" = "--links" ] && {
+    links=1
+    shift
+}
+dir="$1"
+
+if [ -n "$links" ]; then
+    rg FAIL "$dir" |
+        ansifilter |
+        rg -r 'func \([^)]+\) $2\(' '.+FAIL: [\w/]+ Test(\w+)/(\w+).+' |
+        sort |
+        uniq |
+        rg -f - --json |
+        delta
+else
+    rg FAIL "$dir" |
+        ansifilter |
+        rg -r 'go test -v -count 1 go.temporal.io/server/$1 -run=$2' '.+FAIL: ([\w/]+) ([\w/]+).+' |
+        sort |
+        uniq
+fi
