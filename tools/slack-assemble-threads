@@ -1,0 +1,118 @@
+#!/usr/bin/env python
+import dataclasses
+import json
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from textwrap import indent
+from typing import Optional, TypedDict, cast
+
+
+class Reply(TypedDict):
+    user: str
+    ts: str
+
+
+class UserProfile(TypedDict):
+    display_name: str
+
+
+@dataclass
+class Message:
+    path: Path  # Path to file containing this message
+    text: str
+    user: str
+    ts: str  # ID of this message
+    thread_ts: Optional[str] = None  # ID of this message's thread (None if no thread).
+    user_profile: Optional[UserProfile] = None
+    replies: list[Reply] = dataclasses.field(default_factory=list)
+
+    def is_root(self):
+        return self.thread_ts is None or self.ts == self.thread_ts
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Message":
+        return cls(
+            **{k: d[k] for k in Message.__dataclass_fields__ if k in d},
+        )
+
+    def add_to_thread(self) -> Optional["Thread"]:
+        if self.user not in users_stash and self.user_profile:
+            users_stash[self.user] = self.user_profile["display_name"]
+        if self.is_root():
+            assert self.ts not in threads, f"root {self.ts} is already in threads"
+            thread = threads[self.ts] = Thread(self, [])
+        else:
+            assert self.thread_ts
+            if not (thread := threads.get(self.thread_ts)):
+                # We haven't encountered the root of this reply yet
+                message_stash[self.ts] = self
+                return
+            assert thread.has_reply(self.ts)
+            thread.reply_messages.append(self)
+        return thread
+
+
+@dataclass
+class Thread:
+    root: Message
+    reply_messages: list[Message]
+
+    def __post_init__(self):
+        # Check whether we've already encountered any of the replies
+        for r in self.root.replies:
+            if m := message_stash.pop(r["ts"], None):
+                self.reply_messages.append(m)
+
+    def write_if_complete(self, outdir: Path):
+        if len(self.reply_messages) == len(self.root.replies):
+            self.write(outdir)
+            del threads[self.root.ts]
+
+    def has_reply(self, ts: str) -> bool:
+        return any(r["ts"] == ts for r in self.root.replies)
+
+    def write(self, outdir: Path):
+        self.reply_messages.sort(key=lambda m: m.ts)
+        channel = self.root.path.parent.name
+        outdir = outdir / channel
+        outdir.mkdir(exist_ok=True)
+        date, _, _ = self.root.path.name.partition(".json")
+        filename = f"{date}-{self.root.ts}.txt"
+        with open(outdir / filename, "w") as fh:
+            for msg in [self.root, *self.reply_messages]:
+                fh.write(users_stash.get(msg.user, msg.user) + "\n\n")
+                fh.write(indent(msg.text + "\n\n\n", "    "))
+
+
+threads: dict[str, Thread] = {}
+message_stash: dict[str, Message] = {}
+users_stash: dict[str, str] = {}
+
+
+def assemble_threads(indir: Path, outdir: Path):
+    for dirpath, _, files in os.walk(indir):
+        for f in files:
+            if not f.endswith(".json"):
+                continue
+            if f in ["channels.json", "integration_logs.json", "users.json"]:
+                continue
+            path = Path(dirpath) / f
+            with path.open() as fh:
+                for d in cast(list[dict], json.load(fh)):
+                    if d.get("subtype") in ["channel_join", "channel_archive"]:
+                        continue
+                    msg = Message.from_dict({"path": path, **d})
+                    if thread := msg.add_to_thread():
+                        thread.write_if_complete(outdir)
+    assert not message_stash, message_stash
+
+
+if __name__ == "__main__":
+    [indir, outdir] = map(Path, sys.argv[1:])
+    if outdir.exists():
+        print(f"{outdir} already exists", file=sys.stderr)
+        sys.exit(1)
+    outdir.mkdir(parents=True)
+    assemble_threads(indir, outdir)
