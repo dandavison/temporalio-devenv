@@ -2,6 +2,7 @@
 import dataclasses
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,16 +95,23 @@ users_stash: dict[str, str] = {}
 def assemble_threads(indir: Path, outdir: Path):
     for dirpath, _, files in os.walk(indir):
         for f in files:
-            if not f.endswith(".json"):
-                continue
-            if f in ["channels.json", "integration_logs.json", "users.json"]:
+            if not re.match(r"\d{4}-\d{2}-\d{2}\.json", f):
                 continue
             path = Path(dirpath) / f
             with path.open() as fh:
                 for d in cast(list[dict], json.load(fh)):
-                    if d.get("subtype") in ["channel_join", "channel_archive"]:
+                    if d.get("subtype") in [
+                        "channel_join",
+                        "channel_archive",
+                        "bot_message",
+                    ]:
                         continue
-                    msg = Message.from_dict({"path": path, **d})
+                    try:
+                        msg = Message.from_dict({"path": path, **d})
+                    except Exception as err:
+                        raise Exception(
+                            f"error reading message from {path}:\n{d}"
+                        ) from err
                     if thread := msg.add_to_thread():
                         thread.write_if_complete(outdir)
     assert not message_stash, message_stash
