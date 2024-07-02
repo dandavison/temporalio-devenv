@@ -1,5 +1,5 @@
 -temporal-workflow-list-ids() {
-  temporal workflow list --output json | jq -r .execution.workflowId
+  temporal workflow list --output json | jq -r '.[].execution.workflowId'
 }
 
 temporal-cancel-all() {

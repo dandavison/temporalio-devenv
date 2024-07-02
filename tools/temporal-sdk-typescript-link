@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# First, modify package.json like this: 
+#
+# "@temporalio/activity": "file:~/src/temporalio/sdk-typescript",
+# "@temporalio/client": "file:~/src/temporalio/sdk-typescript",
+# "@temporalio/common": "file:~/src/temporalio/sdk-typescript",
+# "@temporalio/proto": "file:~/src/temporalio/sdk-typescript",
+# "@temporalio/worker": "file:~/src/temporalio/sdk-typescript",
+# "@temporalio/workflow": "file:~/src/temporalio/sdk-typescript",
+
+
+for proj in activity client common proto worker workflow; do
+    (cd ~/src/temporalio/sdk-typescript/packages/$proj && npm link)
+    npm link @temporalio/$proj
+done
+
+npm install
