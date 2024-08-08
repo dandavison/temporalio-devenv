@@ -2,17 +2,18 @@
 
 # First, modify package.json like this: 
 #
-# "@temporalio/activity": "file:~/src/temporalio/sdk-typescript",
-# "@temporalio/client": "file:~/src/temporalio/sdk-typescript",
-# "@temporalio/common": "file:~/src/temporalio/sdk-typescript",
-# "@temporalio/proto": "file:~/src/temporalio/sdk-typescript",
-# "@temporalio/worker": "file:~/src/temporalio/sdk-typescript",
-# "@temporalio/workflow": "file:~/src/temporalio/sdk-typescript",
+# "@temporalio/activity": "file:~/src/temporalio/sdk-typescript/packages/activity",
+# "@temporalio/client": "file:~/src/temporalio/sdk-typescript/packages/client",
+# "@temporalio/common": "file:~/src/temporalio/sdk-typescript/packages/common",
+# "@temporalio/proto": "file:~/src/temporalio/sdk-typescript/packages/proto",
+# "@temporalio/worker": "file:~/src/temporalio/sdk-typescript/packages/worker",
+# "@temporalio/workflow": "file:~/src/temporalio/sdk-typescript/packages/workflow",
 
 
 for proj in activity client common proto worker workflow; do
+    sed -i "s|\"@temporalio/$proj\": \"[^\"]*\",|\"@temporalio/$proj\": \"file:~/src/temporalio/sdk-typescript/packages/$proj\",|" package.json
     (cd ~/src/temporalio/sdk-typescript/packages/$proj && npm link)
     npm link @temporalio/$proj
-done
+done > /dev/null
 
 npm install

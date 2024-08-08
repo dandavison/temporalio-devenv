@@ -1,0 +1,7 @@
+#!/bin/bash
+
+set -u
+
+dir=$(ls -dt /tmp/logs_* | head -n 1)
+echo "dir: $dir"
+rg-delta -C0 ' - Failed' "$dir"
