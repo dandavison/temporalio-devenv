@@ -1,20 +1,20 @@
--temporal-workflow-list-ids() {
-  temporal workflow list --output json | jq -r '.[].execution.workflowId'
+temporal-workflow-list-ids() {
+  temporal workflow list --output json | jq -r '.[] | "\(.execution.workflowId) \(.execution.runId)"'
 }
 
 temporal-cancel-all() {
-  local w
-  -temporal-workflow-list-ids | while read w; do temporal workflow cancel -w $w; done
+  local r w
+  temporal-workflow-list-ids | while read w r; do temporal workflow cancel -w $w -r $r; done
 }
 
 temporal-delete-all() {
-  local w
-  -temporal-workflow-list-ids | while read w; do temporal workflow delete -w $w; done
+  local r w
+  temporal-workflow-list-ids | while read w r; do temporal workflow delete -w $w -r $r; done
 }
 
 temporal-terminate-all() {
-  local w
-  -temporal-workflow-list-ids | while read w; do temporal workflow terminate -w $w; done
+  local r w
+  temporal-workflow-list-ids | while read w r; do temporal workflow terminate -w $w -r $r; done
 }
 
 temporal-workflow-start() {
