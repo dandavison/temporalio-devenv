@@ -12,6 +12,11 @@ temporal-delete-all() {
   temporal-workflow-list-ids | while read w r; do temporal workflow delete -w $w -r $r; done
 }
 
+temporal-server() {
+  temporal --log-format json server start-dev \
+    |& pretty-logs
+}
+
 temporal-terminate-all() {
   local r w
   temporal-workflow-list-ids | while read w r; do temporal workflow terminate -w $w -r $r; done
