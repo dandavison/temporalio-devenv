@@ -13,7 +13,7 @@ temporal-delete-all() {
 }
 
 temporal-server() {
-  temporal --log-format json server start-dev \
+  temporal --log-format json server start-dev "$@" \
     |& pretty-logs
 }
 
