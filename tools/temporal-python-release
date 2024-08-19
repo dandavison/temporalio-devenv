@@ -1,0 +1,159 @@
+#!/usr/bin/env python
+
+import argparse
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from subprocess import call, check_call, check_output
+from typing import Self
+
+
+@dataclass
+class Release:
+    previous_release_ref: str
+    this_release_ref: str
+    fresh_clone_dir: str = "sdk-python-for-deploy-to-pypi"
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> Self:
+        assert is_ancestor_of(args.previous_release_ref, "main")
+        assert is_ancestor_of(args.this_release_ref, "main")
+        assert is_ancestor_of(args.previous_release_ref, args.this_release_ref)
+        self = cls(
+            previous_release_ref=args.previous_release_ref,
+            this_release_ref=args.this_release_ref,
+        )
+        assert not Path(
+            self.fresh_clone_dir
+        ).exists(), f"{self.fresh_clone_dir} exists already"
+        return self
+
+    def release(self):
+        # 1. Prepare release
+        """
+        1.1 Generate change-set for release notes from the current master branch using the hash of the last performed release: e.g.
+            git log 85593dbfa99bddcdf54c7196d2b73eeb23e94e9e..HEAD --pretty="" --date=short | sort
+        """
+        self.generate_change_set()
+        input(
+            "\n\n1.2 Create a new draft release for the last commit in sdk-python repo and use the change-set from above for the release notes. Name the release what the tag will be which is the upcoming PyPI version."
+        )
+        """
+        1.3. Create a new PR that upgrades the version in `pyproject.toml` and `temporalio/service.py`.
+        """
+        self.bump_version_in_code()
+        input("""
+            4. If using a custom [sdk-features](https://github.com/temporalio/sdk-features/) branch for PR integration tests, make sure the branch is fully up-to-date with sdk-features `main` and trigger a build.
+            5. Merge the PR from (c).
+        """)
+        # 2. Collect artifacts
+        """
+        1. Clone the primary repo at main and make a new dir inside called `distrelease/` (will never be committed).
+           We are only checking out the repo so `poetry run twine` will work, we don’t actually need the source.
+           Also run `poetry install --no-root` in here to load things.
+        """
+        self.prepare_fresh_clone_for_deploy_to_pypi()
+        input("""
+            2. Download all artifacts from the last `main` branch GH action CI build after merging version update.
+            Put all (unzipped) artifacts into `distrelease/` (the `.tar.gz` should be from the Linux one just to ensure line endings).
+
+            The artifact file names should be 5 wheels and a tar.gz, like this:
+                            
+            temporalio-1.6.0-cp38-abi3-macosx_10_9_x86_64.whl
+            temporalio-1.6.0-cp38-abi3-macosx_11_0_arm64.whl
+            temporalio-1.6.0-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+            temporalio-1.6.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+            temporalio-1.6.0-cp38-abi3-win_amd64.whl
+            temporalio-1.6.0.tar.gz              
+        """)
+        # 3. Deploy
+        input("""
+            1. Deploy to TestPyPI first. While in root of repo, run: `poetry run twine upload --repository testpypi distrelease/*`. Username is `__token__` and then you use an API token. There is a token in 1password for the temporalio user, but any owner on the project can use theirs.
+            2. Do simple manual confirmation that the release works. For example:
+                1. Clone the samples from https://github.com/temporalio/samples-python
+                2. Change pyproject.toml to the new temporalio version and add this at the bottom:
+
+                    ```
+                    [[tool.poetry.source]]
+                    name = "test-pypi"
+                    url = "https://test.pypi.org/simple/"
+                    secondary = true
+                    ```
+
+                3. Run `poetry --no-cache update temporalio`
+                4. With a localhost server running, run `poetry run python hello/hello_activity.py`
+
+            3. Deploy to PyPI. While in root of repo, run: `poetry run twine upload distrelease/*`. Username is `__token__` and then you use an API token. There is a token in 1password for the temporalio user, but any owner on the project can use theirs.
+            4. Redo the simple manual confirmation for the released deployment
+            5. Publish the draft GH release
+        """)
+        # 4. Update dependent projects
+        input("""
+            1. Update SDK in sdk-features
+                1. This has to be done in `pyproject.toml` (with associated `poetry update temporalio`) and multiple spots in `.github/workflows/ci.yaml`
+                2. If using a custom [sdk-features](https://github.com/temporalio/sdk-features/) branch for PR integration tests, merge that branch into sdk-features `main` and update the SDK workflow definition to trigger sdk-features `main` (see (1-d)).
+            2. Update SDK in samples-python
+        """)
+
+    def generate_change_set(self):
+        check_call(
+            [
+                "bash",
+                "-c",
+                rf"git log {self.previous_release_ref}..{self.this_release_ref} --pretty='%cd - %h - %s' --date=short | sort",
+            ]
+        )
+
+    def bump_version_in_code(self):
+        assert not uncommitted_changes()
+        made_commit = False
+        for path in ["pyproject.toml", "temporalio/service.py"]:
+            check_call(
+                [
+                    "sed",
+                    "-E",
+                    "-i",
+                    f's/"{re.escape(self.previous_release_ref)}"/"{self.this_release_ref}"/',
+                    path,
+                ]
+            )
+            if uncommitted_changes():
+                check_call(["git", "commit", "-am", f"Bump version in {path}"])
+                made_commit = True
+            else:
+                print(
+                    f"WARNING: Looks like you've already bumped the version in {path}. No changes made in {path} when attempting to s/{self.previous_release_ref}/{self.this_release_ref}/"
+                )
+
+        if made_commit:
+            input("\n\nVersion-bump commits have been made; squash them and make a PR.")
+
+    def prepare_fresh_clone_for_deploy_to_pypi(self):
+        check_call(
+            [
+                "git",
+                "clone",
+                "--recurse-submodules",
+                "org-56493103@github.com:temporalio/sdk-python.git",
+                self.fresh_clone_dir,
+            ]
+        )
+        (Path(self.fresh_clone_dir) / "distrelease").mkdir()
+        check_call(["poetry", "install", "--no-root"], cwd=self.fresh_clone_dir)
+
+
+def is_ancestor_of(ancestor: str, descendent: str) -> bool:
+    code = call(["git", "merge-base", "--is-ancestor", ancestor, descendent])
+    assert code in [0, 1], f"git merge-base --is-ancestor exited with code {code}"
+    return code == 0
+
+
+def uncommitted_changes() -> str:
+    return check_output(["git", "diff"]).decode()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--previous-release-ref", type=str, required=True)
+    parser.add_argument("--this-release-ref", type=str, required=True)
+    Release.from_args(parser.parse_args()).release()
