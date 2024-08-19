@@ -1,3 +1,7 @@
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_TRACES_INSECURE=true
+export TEMPORAL_OTEL_DEBUG=true
+
 temporal-workflow-list-ids() {
   temporal workflow list --output json | jq -r '.[] | "\(.execution.workflowId) \(.execution.runId)"'
 }
