@@ -1,0 +1,3 @@
+exporters:
+  logging:
+    loglevel: debug
