@@ -1,0 +1,10 @@
+#!/bin/bash
+
+repos=("samples-go" "samples-java" "samples-python" "samples-typescript" "samples-dotnet")
+for repo in "${repos[@]}"; do
+  printf "\e[34;1m%s\e[0m\n" "$repo"
+  response=$(gh api repos/temporalio/"$repo"/traffic/popular/paths)
+  echo "$response" | jq -r '.[] | "\(.count) \(.uniques) \(.path)"'
+  echo
+done
+
