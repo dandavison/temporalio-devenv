@@ -1,0 +1,2 @@
+sudo ngrep -d any 'service\.name' dst port 4317 |
+    rg -r '$1' '.*service\.name\.+([a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*).*'
