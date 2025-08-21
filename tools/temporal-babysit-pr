@@ -1,0 +1,52 @@
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# dependencies = ["claude-code-sdk", "typer"]
+# ///
+import asyncio
+from textwrap import dedent
+from typing import AsyncGenerator
+
+import typer
+from claude_code_sdk import AssistantMessage, ClaudeCodeOptions, TextBlock, query
+
+app = typer.Typer()
+
+
+async def claude_code(prompt: str) -> AsyncGenerator[str, None]:
+    options = ClaudeCodeOptions(
+        allowed_tools=["Bash"],
+    )
+    async for message in query(prompt=prompt, options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    yield block.text
+
+
+async def babysit(pr: str):
+    prompt = dedent(
+        f"""
+            Use the gh tool to check the status of {pr}.
+            If there is no CI run in progress and the last one failed, kick off a re-run of the failed jobs.
+            If there's a run in progress, do nothing.
+            Print a timestamp and description of the PR status and what you did.
+            Print a summary of which tests failed and why.
+            """.strip()
+    )
+    while True:
+        async for msg in claude_code(prompt):
+            print(msg)
+        await asyncio.sleep(300)
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    pr: str = typer.Argument(..., help="PR URL or owner/repo#number"),
+):
+    """Babysit a GitHub PR by rerunning failed CI automatically."""
+    asyncio.run(babysit(pr))
+
+
+if __name__ == "__main__":
+    app()
