@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# Describe executions in a test cell as JSON
+# Usage: ./oss-cicd/tools/describe/describe-cluster oss-cass-es-f295a98b ns-f295a98b
+
+set -euo pipefail
+
+CLUSTER="${1:?Usage: $0 <cluster-name> <namespace>}"
+NS="${2:?Usage: $0 <cluster-name> <namespace>}"
+
+# Cache lookup
+SCRIPT_NAME="$(basename "$0")"
+CACHE_KEY="${SCRIPT_NAME}--${CLUSTER}--${NS}"
+CACHE_FILE=".describe/$CACHE_KEY"
+if [[ -f "$CACHE_FILE" ]]; then
+  cat "$CACHE_FILE"
+  exit 0
+fi
+
+# Ensure certs exist
+if [[ ! -f /tmp/test-cell-client.crt ]]; then
+  omni kubectl --context "$CLUSTER" get secret oss-e2e-worker-mtls -n "$NS" -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/test-cell-client.crt
+  omni kubectl --context "$CLUSTER" get secret oss-e2e-worker-mtls -n "$NS" -o jsonpath='{.data.tls\.key}' | base64 -d > /tmp/test-cell-client.key
+  omni kubectl --context "$CLUSTER" get secret oss-e2e-worker-mtls -n "$NS" -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/test-cell-ca.crt
+fi
+
+# Kill any existing port-forward on 7233 and start one for this cluster
+pkill -f "port-forward.*7233:7233" 2>/dev/null || true
+sleep 1
+omni kubectl --context "$CLUSTER" port-forward -n "$NS" svc/temporal-frontend 7233:7233 &
+PF_PID=$!
+trap "kill $PF_PID 2>/dev/null" EXIT
+TRIES=0
+until nc -z localhost 7233 2>/dev/null; do
+  sleep 2
+  TRIES=$((TRIES + 1))
+  if [[ $TRIES -ge 10 ]]; then
+    echo "ERROR: port-forward failed - cluster may be cleaned up" >&2
+    exit 1
+  fi
+done
+
+# Common temporal args
+TARGS=(
+  --address localhost:7233
+  --namespace loadtest
+  --tls
+  --tls-cert-path /tmp/test-cell-client.crt
+  --tls-key-path /tmp/test-cell-client.key
+  --tls-ca-path /tmp/test-cell-ca.crt
+  --tls-server-name oss-e2e-worker
+)
+
+# Count helper - runs temporal workflow count with query
+wf_count() {
+  local query="$1"
+  local result
+  if [[ -z "$query" ]]; then
+    result=$(temporal workflow count "${TARGS[@]}" 2>/dev/null)
+  else
+    result=$(temporal workflow count "${TARGS[@]}" --query "$query" 2>/dev/null)
+  fi
+  echo "$result" | grep -oE '[0-9]+' | head -1 || echo "0"
+}
+
+# Count with status breakdown, returns JSON
+count_with_status() {
+  local base_query="$1"
+  local total completed failed running terminated canceled
+  total=$(wf_count "$base_query")
+  if [[ -z "$base_query" ]]; then
+    completed=$(wf_count 'ExecutionStatus = "Completed"')
+    failed=$(wf_count 'ExecutionStatus = "Failed"')
+    running=$(wf_count 'ExecutionStatus = "Running"')
+    terminated=$(wf_count 'ExecutionStatus = "Terminated"')
+    canceled=$(wf_count 'ExecutionStatus = "Canceled"')
+  else
+    completed=$(wf_count "$base_query AND ExecutionStatus = \"Completed\"")
+    failed=$(wf_count "$base_query AND ExecutionStatus = \"Failed\"")
+    running=$(wf_count "$base_query AND ExecutionStatus = \"Running\"")
+    terminated=$(wf_count "$base_query AND ExecutionStatus = \"Terminated\"")
+    canceled=$(wf_count "$base_query AND ExecutionStatus = \"Canceled\"")
+  fi
+  jq -n --argjson total "$total" --argjson completed "$completed" \
+    --argjson failed "$failed" --argjson running "$running" \
+    --argjson terminated "$terminated" --argjson canceled "$canceled" \
+    '{total: $total, completed: $completed, failed: $failed, running: $running, terminated: $terminated, canceled: $canceled}'
+}
+
+# Subtract two count JSONs
+subtract_counts() {
+  local a="$1" b="$2"
+  jq -n --argjson a "$a" --argjson b "$b" '{
+    total: ($a.total - $b.total),
+    completed: ($a.completed - $b.completed),
+    failed: ($a.failed - $b.failed),
+    running: ($a.running - $b.running),
+    terminated: ($a.terminated - $b.terminated),
+    canceled: ($a.canceled - $b.canceled)
+  }'
+}
+
+echo "Counting standalone activities..." >&2
+SA_COUNTS=$(count_with_status 'WorkflowId starts_with "standalone-"')
+
+echo "Counting CHASM executions..." >&2
+CHASM_COUNTS=$(count_with_status 'TemporalNamespaceDivision != ""')
+
+# Other CHASM = CHASM - standalone
+echo "Computing other CHASM..." >&2
+OTHER_COUNTS=$(subtract_counts "$CHASM_COUNTS" "$SA_COUNTS")
+
+# Total from base count (deduped by workflow ID)
+echo "Counting total..." >&2
+TOTAL=$(wf_count "")
+
+# Workflows: can't compute reliably (TemporalNamespaceDivision = "" returns 0 for unset attributes)
+# Just report what we know
+WF_COUNTS='{"total": null, "completed": null, "failed": null, "running": null, "terminated": null, "canceled": null}'
+
+# byType not available with count queries
+WF_BY_TYPE='[]'
+
+# Output JSON
+OUTPUT=$(jq -n \
+  --arg cluster "$CLUSTER" \
+  --arg ns "$NS" \
+  --argjson total "$TOTAL" \
+  --argjson sa "$SA_COUNTS" \
+  --argjson other "$OTHER_COUNTS" \
+  --argjson wf "$WF_COUNTS" \
+  --argjson wf_by_type "$WF_BY_TYPE" \
+  '{
+    cluster: $cluster,
+    namespace: $ns,
+    total: $total,
+    standaloneActivities: $sa,
+    otherChasmExecutions: $other,
+    workflows: ($wf + {byType: $wf_by_type})
+  }')
+
+# Save to cache
+mkdir -p "$(dirname "$CACHE_FILE")"
+echo "$OUTPUT" > "$CACHE_FILE"
+echo "$OUTPUT"

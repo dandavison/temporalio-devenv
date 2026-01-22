@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cols="${1:-[]}"
+
+jq -r --argjson cols "$cols" '
+  (if ($cols | length) == 0 then (.[0] | keys_unsorted) else $cols end) as $cols |
+  ($cols | @tsv),
+  (.[] as $row | [
+    $cols[] | . as $path | $row | getpath($path | split(".")) |
+    if type == "object" or type == "array" then tojson
+    elif . == null or . == "" then "-"
+    else tostring
+    end
+  ] | @tsv)
+' | column -t -s $'\t'

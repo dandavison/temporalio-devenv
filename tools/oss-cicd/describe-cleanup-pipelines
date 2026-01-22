@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Describe cleanup pipelines from cached pipeline data
+# Usage: ./oss-cicd/tools/investigate/describe-cleanup-pipelines | ./oss-cicd/tools/investigate/json-table
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+CACHE_DIR=".describe"
+
+# Get cleanup workflow IDs from cache (handle both old and new script names)
+CLEANUP_IDS=$(cat "$CACHE_DIR"/describe-pipeline--*.json 2>/dev/null | \
+  jq -r 'select(.cleanupWorkflowId != null) | .cleanupWorkflowId' | \
+  sort -u)
+
+if [[ -z "$CLEANUP_IDS" ]]; then
+  echo "No cleanup workflows found in cache" >&2
+  exit 1
+fi
+
+# Query each cleanup workflow, output one JSON object per line
+for wfid in $CLEANUP_IDS; do
+  CACHE_KEY="${SCRIPT_NAME}--${wfid//\//-}.json"
+  CACHE_FILE="$CACHE_DIR/$CACHE_KEY"
+
+  if [[ -f "$CACHE_FILE" ]]; then
+    cat "$CACHE_FILE"
+    continue
+  fi
+
+  echo "$wfid" >&2
+
+  omni temporal --yes -o json workflow describe -n oss-cicd.e2e -w "$wfid" | \
+    jq --arg wfid "$wfid" '{workflowId: $wfid, status: .workflowExecutionInfo.status, parentWorkflowId: .workflowExecutionInfo.parentExecution.workflowId}' | \
+    tee "$CACHE_FILE"
+done | jq -s .

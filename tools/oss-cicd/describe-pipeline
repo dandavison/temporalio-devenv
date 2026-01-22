@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Get details from a pipeline workflow as JSON
+# Usage: ./oss-cicd/tools/investigate/describe-pipeline Nightlies/6586701f/PipelineCassEs/14/chasm
+
+set -euo pipefail
+
+WORKFLOW_ID="${1:?Usage: $0 <pipeline-workflow-id>}"
+
+# Cache lookup
+SCRIPT_NAME="$(basename "$0")"
+CACHE_KEY="${SCRIPT_NAME}--${*//\//-}.json"
+CACHE_FILE=".describe/$CACHE_KEY"
+if [[ -f "$CACHE_FILE" ]]; then
+  cat "$CACHE_FILE"
+  exit 0
+fi
+
+# Get workflow status
+STATUS=$(omni temporal --yes -o json workflow describe -n oss-cicd.e2e -w "$WORKFLOW_ID" | \
+  jq -r '.workflowExecutionInfo.status')
+
+# Extract result from completed workflow
+RESULT='{}'
+if [[ "$STATUS" == "WORKFLOW_EXECUTION_STATUS_COMPLETED" ]]; then
+  RESULT=$(omni temporal --yes -o json workflow show -n oss-cicd.e2e -w "$WORKFLOW_ID" | \
+    jq -r '.events[] | select(.workflowExecutionCompletedEventAttributes) | .workflowExecutionCompletedEventAttributes.result.payloads[0].data' | \
+    base64 -d || echo '{}')
+fi
+
+OUTPUT=$(echo "$RESULT" | jq --arg wfid "$WORKFLOW_ID" --arg status "$STATUS" '{
+    workflowId: $wfid,
+    status: $status,
+    clusterName: .clusterName,
+    namespace: .kubernetesNamespace,
+    failed: .Failed,
+    errors: ((.errors // []) | length),
+    canaryErrors: ((.canaryErrors // []) | length),
+    cleanupWorkflowId: .cleanupWorkflowID
+  }')
+
+# Save to cache
+mkdir -p "$(dirname "$CACHE_FILE")"
+echo "$OUTPUT" > "$CACHE_FILE"
+echo "$OUTPUT"

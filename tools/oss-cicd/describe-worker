@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Get the worker version that executed a workflow
+# Usage: ./oss-cicd/tools/describe/describe-worker <workflow-id>
+
+set -euo pipefail
+
+WORKFLOW_ID="${1:?Usage: $0 <workflow-id>}"
+
+omni temporal --yes -o json workflow describe -n oss-cicd.e2e -w "$WORKFLOW_ID" 2>/dev/null | \
+  jq -r '.workflowExecutionInfo.searchAttributes.indexedFields.TemporalWorkerDeploymentVersion.data' | \
+  base64 -d

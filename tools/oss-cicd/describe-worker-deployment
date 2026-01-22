@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Investigate why a worker deployment may not be running as expected
+# Usage: ./oss-cicd/tools/describe/investigate-worker-deployment [workflow-id]
+#
+# This script helps diagnose issues where:
+# - A deployment notification says "Succeeded" but the new version isn't used
+# - Workflows are running on an older worker version than expected
+#
+# Investigation steps:
+# 1. Check which worker version a workflow actually ran on
+# 2. Check the worker deployment versions registered with Temporal
+# 3. Check k8s deployment and pod status
+# 4. Check for image pull errors or other pod failures
+
+set -euo pipefail
+
+omni temporal --yes worker deployment describe -n oss-cicd.e2e --name "oss-cicd/worker"
+
+WORKFLOW_ID="${1:-}"
+K8S_CONTEXT="w-internal-test"
+K8S_NAMESPACE="oss-cicd"
+TEMPORAL_NAMESPACE="oss-cicd.e2e"
+
+
+echo "=== Worker Deployment Investigation ==="
+echo ""
+
+# Step 1: If workflow ID provided, check what version it ran on
+if [[ -n "$WORKFLOW_ID" ]]; then
+  echo "### Step 1: Worker version used by workflow $WORKFLOW_ID"
+  VERSION=$(omni temporal --yes -o json workflow describe -n "$TEMPORAL_NAMESPACE" -w "$WORKFLOW_ID" 2>/dev/null | \
+    jq -r '.workflowExecutionInfo.searchAttributes.indexedFields.TemporalWorkerDeploymentVersion.data // empty' | \
+    base64 -d 2>/dev/null | tr -d '"' || echo "unknown")
+  echo "  Worker version: $VERSION"
+  COMMIT=$(echo "$VERSION" | sed 's/.*:sha-//' | cut -d- -f1)
+  echo "  Commit: $COMMIT"
+  echo ""
+fi
+
+# Step 2: Check worker deployment versions in Temporal
+echo "### Step 2: Worker deployment versions registered with Temporal"
+echo "  Current and recent versions:"
+omni temporal --yes worker deployment describe -n "$TEMPORAL_NAMESPACE" --name "oss-cicd/worker" 2>&1 | \
+  grep -E "(CurrentVersionBuildID|RampingVersion|DeploymentName.*BuildID)" | head -10
+echo ""
+
+# Step 3: Check k8s deployments
+echo "### Step 3: Kubernetes deployments in $K8S_NAMESPACE namespace"
+omni kubectl --context "$K8S_CONTEXT" get deployments -n "$K8S_NAMESPACE" 2>&1 | grep -v "^warning\|^time=" | tail -10
+echo ""
+
+# Step 4: Check pod status
+echo "### Step 4: Pod status (look for non-Running pods)"
+omni kubectl --context "$K8S_CONTEXT" get pods -n "$K8S_NAMESPACE" 2>&1 | grep -v "^warning\|^time=" | tail -20
+echo ""
+
+# Step 5: Check for image pull errors
+echo "### Step 5: Recent pod events (errors)"
+omni kubectl --context "$K8S_CONTEXT" get events -n "$K8S_NAMESPACE" --sort-by='.lastTimestamp' 2>&1 | \
+  grep -v "^warning\|^time=" | grep -iE "(error|fail|backoff|ErrImage)" | tail -10 || echo "  No error events found"
+echo ""
+
+echo "=== Summary ==="
+echo "If you see:"
+echo "  - ErrImagePull/ImagePullBackOff: The Docker image doesn't exist. Check if CI built it."
+echo "  - CrashLoopBackOff: The worker is crashing. Check pod logs."
+echo "  - 0/N READY: Pods aren't starting. Check events and pod describe."
+echo "  - Version not in Temporal list: Worker never registered. Check if pods started."
+echo ""
+echo "Useful follow-up commands:"
+echo "  # Check pod logs:"
+echo "  ct.py kubectl --context $K8S_CONTEXT logs -n $K8S_NAMESPACE <pod-name>"
+echo ""
+echo "  # Describe a failing pod:"
+echo "  ct.py kubectl --context $K8S_CONTEXT describe pod -n $K8S_NAMESPACE <pod-name>"
+echo ""
+echo "  # Check if Docker image exists:"
+echo "  docker manifest inspect temporaliotest/oss-cicd:sha-<commit>"

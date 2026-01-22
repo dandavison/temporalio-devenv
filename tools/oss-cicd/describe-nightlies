@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# List pipelines from a Nightlies run as JSON array
+# Usage: ./oss-cicd/tools/investigate/investigate-nightlies 904a5218-dc80-4d43-934c-c31c3a87546e | ./oss-cicd/tools/investigate/json-table
+
+set -euo pipefail
+
+WORKFLOW_ID="${1:?Usage: $0 <nightlies-workflow-id>}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+WORKFLOWS=$(
+  omni temporal --yes -o json workflow list -n oss-cicd.e2e --query "ParentWorkflowId = \"$WORKFLOW_ID\""
+)
+
+# Collect JSON from each pipeline
+echo "["
+first=true
+for wfid in $(echo "$WORKFLOWS" | jq -r '.[].execution.workflowId'); do
+  echo $wfid >&2
+  if $first; then
+    first=false
+  else
+    echo ","
+  fi
+  "$SCRIPT_DIR/describe-pipeline" "$wfid"
+done
+echo "]"
