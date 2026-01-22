@@ -1,1 +1,1 @@
- curl -X POST -H "Authorization: Bearer $SLACK_API_TOKEN" "https://temporaltechnologies.slack.com/api/search.messages?query=otel"
+ curl -X POST -H "Authorization: Bearer $SLACK_API_TOKEN" "https://temporaltechnologies.slack.com/api/search.messages?query=$1"

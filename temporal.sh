@@ -1,15 +1,59 @@
+ot() {
+    omni temporal --yes --namespace oss-cicd.e2e "$@"
+}
+_ot() {
+    words[1]=temporal
+    _temporal
+}
+compdef _ot ot
+
+
+temporal-bench-go-setup() {
+	temporal operator namespace create -n default
+	temporal operator search-attribute create --name CustomStringField --type Text || true
+	temporal operator search-attribute create --name CustomKeywordField --type Keyword || true
+	temporal operator nexus endpoint create --name bench-endpoint --target-namespace default --target-task-queue temporal-bench || true
+}
+
+temporal-ui-start() {
+  if docker ps -q -f name=^temporal-ui$ | grep -q .; then
+    echo "temporal-ui already running"
+  elif docker ps -aq -f name=^temporal-ui$ | grep -q .; then
+    docker start temporal-ui
+  else
+    docker run -d -p 8080:8080 -e TEMPORAL_ADDRESS=host.docker.internal:7233 --name temporal-ui temporalio/ui:latest
+  fi
+}
+
+temporal-ui-stop() {
+  docker stop temporal-ui 2>/dev/null || true
+}
+
 temporal-workflow-list-ids() {
-  temporal workflow list --output json | jq -r '.[] | "\(.execution.workflowId) \(.execution.runId)"'
+  local namespace="${1:-default}"
+  temporal workflow list --namespace "$namespace" --output json | jq -r '.[] | "\(.execution.workflowId) \(.execution.runId)"'
 }
 
 temporal-cancel-all() {
+  local namespace="${1:-default}"
   local r w
-  temporal-workflow-list-ids | while read w r; do temporal workflow cancel -w $w -r $r; done
+  temporal-workflow-list-ids "$namespace" | while read w r; do temporal workflow --namespace "$namespace" cancel -w $w -r $r; done
 }
 
 temporal-delete-all() {
+  local namespace="${1:-default}"
   local r w
-  temporal-workflow-list-ids | while read w r; do temporal workflow delete -w $w -r $r; done
+  temporal-workflow-list-ids "$namespace" | while read w r; do temporal workflow --namespace "$namespace" delete -w $w -r $r; done
+}
+
+temporal-go-test-branch() {
+  gds --name-only main... **/*_test.go | t-go-test
+}
+
+temporal-go-test() {
+    xargs -I{} dirname {} | \
+    sort -u | \
+    xargs -I{} go test -p 8 -v -count 1 -tags test_dep go.temporal.io/server/{}
 }
 
 temporal-server() {
@@ -20,8 +64,9 @@ temporal-server() {
 }
 
 temporal-terminate-all() {
+  local namespace="${1:-default}"
   local r w
-  temporal-workflow-list-ids | while read w r; do temporal workflow terminate -w $w -r $r; done
+  temporal-workflow-list-ids "$namespace" | while read w r; do temporal workflow --namespace "$namespace" terminate -w $w -r $r; done
 }
 
 temporal-workflow-start() {
@@ -92,6 +137,26 @@ github-list-prs() {
     }
   }"
 }' https://api.github.com/graphql
+}
+
+sdk-java-kill-all() {
+  # Kill Temporal server
+  pkill -f "temporal server" || true
+
+  # Kill HandlerWorker processes
+  pkill -f "HandlerWorker" || true
+
+  # Kill CallerWorker processes
+  pkill -f "CallerWorker" || true
+
+  # Kill any gradle execute processes related to nexus samples
+  pkill -f "gradle.*execute.*nexus" || true
+
+  # Kill any remaining gradle execute processes
+  pkill -f "gradle.*execute" || true
+
+  # Verify all processes are killed
+  ps aux | grep -E "(temporal|nexus|gradle.*execute)" | grep -v grep
 }
 
 # # omni shell integration

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Fetches recent self-signup entries from the account-self-signup-prod Slack channel
+# and outputs JSON with company name, customer email, and activation date.
+#
+# Usage: temporal-slack-channel-signups [count]
+#   count: number of messages to fetch (default: 200)
+#
+# Requires: SLACK_API_TOKEN environment variable
+
+set -euo pipefail
+
+COUNT="${1:-200}"
+CHANNEL="account-self-signup-prod"
+PAGE_SIZE=20
+
+# Calculate number of pages needed
+PAGES=$(( (COUNT + PAGE_SIZE - 1) / PAGE_SIZE ))
+
+# Fetch all pages and combine results
+(
+    for page in $(seq 1 "$PAGES"); do
+        curl -s -H "Authorization: Bearer $SLACK_API_TOKEN" \
+            "https://slack.com/api/search.messages?query=in:$CHANNEL&count=$PAGE_SIZE&page=$page&sort=timestamp&sort_dir=desc" \
+            | jq -c '.messages.matches[]'
+    done
+) | jq -s '[.[]
+    | select(.attachments != null and (.attachments | length) > 0)
+    | select(.attachments[0].blocks != null and (.attachments[0].blocks | length) > 0)
+    | .attachments[0].blocks[0] as $block
+    | select($block.text != null and $block.text.text != null)
+    | select($block.fields != null)
+    | ($block.text.text | capture("Account [^ ]+ \\((?<company>[^)]+)\\)"; "g") | .company) as $company
+    | select($company != null)
+    | ($block.fields[] | select(.text | startswith("*Customer Email")) | .text | capture("<mailto:(?<email>[^|]+)\\|") | .email) as $email
+    | ($block.fields[] | select(.text | startswith("*Activation Date")) | .text | split("\n")[1]) as $date
+    | {
+        company_name: $company,
+        customer_email: $email,
+        activation_date: $date
+    }
+]'

@@ -1,0 +1,8 @@
+# Get the blob hash from sdk-core main
+BLOB=$(git hash-object <(git show main:crates/common/protos/api_upstream/temporal/api/workflowservice/v1/service.proto))
+
+# Then in the api repo, find the matching commit:
+git log --all --format="%H" -- temporal/api/workflowservice/v1/service.proto | while read c; do
+  b=$(git ls-tree $c -- temporal/api/workflowservice/v1/service.proto | awk '{print $3}')
+  [ "$b" = "$BLOB" ] && git log -1 --oneline $c && break
+done
